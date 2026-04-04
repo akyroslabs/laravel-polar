@@ -2,57 +2,84 @@
 
 namespace AkyrosLabs\Polar\Console;
 
+use AkyrosLabs\Polar\Models\Customer;
+use AkyrosLabs\Polar\Models\Subscription;
 use AkyrosLabs\Polar\PolarClient;
 use Illuminate\Console\Command;
 
 class SyncSubscriptionsCommand extends Command
 {
-    protected $signature = 'polar:sync';
-    protected $description = 'Sync all subscription statuses with Polar.sh';
+    protected $signature = 'polar:sync
+                            {--customer= : Sync only a specific Polar customer ID}';
+
+    protected $description = 'Sync all subscriptions from the Polar API';
 
     public function handle(PolarClient $client): int
     {
-        $modelClass = config('polar.billable_model');
-        $billables = $modelClass::whereNotNull('polar_subscription_id')->get();
+        $specificCustomer = $this->option('customer');
 
-        $this->info("Syncing {$billables->count()} subscriptions...");
-        $bar = $this->output->createProgressBar($billables->count());
+        if ($specificCustomer) {
+            $customers = Customer::where('polar_id', $specificCustomer)->get();
+        } else {
+            $customers = Customer::whereNotNull('polar_id')->get();
+        }
+
+        if ($customers->isEmpty()) {
+            $this->warn('No Polar customers found in the database.');
+            return self::SUCCESS;
+        }
+
+        $this->info("Syncing subscriptions for {$customers->count()} customer(s)...");
+        $bar = $this->output->createProgressBar($customers->count());
 
         $synced = 0;
-        foreach ($billables as $billable) {
+        $errors = 0;
+
+        foreach ($customers as $customer) {
             try {
-                $subscription = $client->getSubscription($billable->polar_subscription_id);
+                $apiSubscriptions = $client->listSubscriptions($customer->polar_id);
 
-                $plan = 'unknown';
-                $plans = config('polar.plans', []);
-                foreach ($plans as $name => $config) {
-                    if (($config['product_id'] ?? null) === ($subscription['product_id'] ?? '')) {
-                        $plan = $name;
-                        break;
-                    }
+                foreach ($apiSubscriptions as $apiSub) {
+                    $sub = Subscription::updateOrCreate(
+                        ['polar_id' => $apiSub['id']],
+                        [
+                            'billable_type' => $customer->billable_type,
+                            'billable_id' => $customer->billable_id,
+                            'type' => 'default',
+                            'status' => $apiSub['status'] ?? 'active',
+                            'product_id' => $apiSub['product_id'] ?? '',
+                            'price_id' => $apiSub['price_id'] ?? $apiSub['recurring_price_id'] ?? null,
+                            'polar_customer_id' => $customer->polar_id,
+                            'current_period_end' => isset($apiSub['current_period_end'])
+                                ? \Carbon\Carbon::parse($apiSub['current_period_end'])
+                                : null,
+                            'trial_ends_at' => isset($apiSub['trial_ends_at'])
+                                ? \Carbon\Carbon::parse($apiSub['trial_ends_at'])
+                                : null,
+                            'ends_at' => isset($apiSub['ends_at'])
+                                ? \Carbon\Carbon::parse($apiSub['ends_at'])
+                                : null,
+                        ]
+                    );
+                    $synced++;
                 }
-
-                $billable->update([
-                    'subscription_status' => $subscription['status'] ?? $billable->subscription_status,
-                    'polar_product_id' => $subscription['product_id'] ?? $billable->polar_product_id,
-                    'plan' => $plan !== 'unknown' ? $plan : $billable->plan,
-                    'current_period_end' => isset($subscription['current_period_end'])
-                        ? \Carbon\Carbon::parse($subscription['current_period_end'])
-                        : $billable->current_period_end,
-                ]);
-
-                $synced++;
-            } catch (\Exception $e) {
-                $this->warn("  Failed to sync {$billable->id}: {$e->getMessage()}");
+            } catch (\Throwable $e) {
+                $errors++;
+                $this->newLine();
+                $this->error("Failed to sync customer {$customer->polar_id}: {$e->getMessage()}");
             }
 
             $bar->advance();
         }
 
         $bar->finish();
-        $this->newLine();
-        $this->info("Synced {$synced}/{$billables->count()} subscriptions.");
+        $this->newLine(2);
+        $this->info("Done. Synced {$synced} subscription(s).");
 
-        return self::SUCCESS;
+        if ($errors > 0) {
+            $this->warn("{$errors} customer(s) had errors during sync.");
+        }
+
+        return $errors > 0 ? self::FAILURE : self::SUCCESS;
     }
 }

@@ -1,6 +1,6 @@
 # Laravel Polar
 
-Polar.sh integration for Laravel — subscriptions, checkout, customer portal, webhooks, and plan management with Polar as Merchant of Record.
+Polar.sh integration for Laravel — subscriptions, checkout, customer portal, webhooks, plan limits, usage billing, benefits, and more. Polar as Merchant of Record.
 
 No tax headaches. No invoice logic. Polar handles it all.
 
@@ -12,15 +12,10 @@ No tax headaches. No invoice logic. Polar handles it all.
 composer require akyroslabs/laravel-polar
 ```
 
-Publish the config:
+Publish config and migrations:
 
 ```bash
 php artisan vendor:publish --tag=polar-config
-```
-
-Run the migration:
-
-```bash
 php artisan vendor:publish --tag=polar-migrations
 php artisan migrate
 ```
@@ -36,7 +31,7 @@ POLAR_SANDBOX=false
 POLAR_BILLABLE_MODEL=App\Models\Tenant
 ```
 
-Configure your plans in `config/polar.php`:
+Configure plans in `config/polar.php`:
 
 ```php
 'plans' => [
@@ -46,12 +41,12 @@ Configure your plans in `config/polar.php`:
         'features' => ['basic_monitoring'],
     ],
     'starter' => [
-        'product_id' => 'polar-product-id-here',
+        'product_id' => 'polar-product-id',
         'limits' => ['servers' => 10, 'users' => 3],
         'features' => ['*'],
     ],
     'pro' => [
-        'product_id' => 'polar-product-id-here',
+        'product_id' => 'polar-product-id',
         'limits' => ['servers' => 50, 'users' => 10],
         'features' => ['*'],
     ],
@@ -63,7 +58,7 @@ Configure your plans in `config/polar.php`:
 Add the `Billable` trait to your model:
 
 ```php
-use AkyrosLabs\Polar\Traits\Billable;
+use AkyrosLabs\Polar\Billable;
 
 class Tenant extends Model
 {
@@ -77,123 +72,169 @@ Register the webhook URL in your Polar dashboard:
 https://your-app.com/polar/webhook
 ```
 
-## Usage
-
-### Checkout
+## Checkout
 
 ```php
 // Redirect to Polar checkout
-return $tenant->checkout('price_id_here')
+return $tenant->checkout('price_id')
     ->successUrl('/dashboard?upgraded=1')
     ->redirect();
 
-// Or get the URL
-$url = $tenant->checkout('price_id_here')->url();
+// Subscribe to a plan
+return $tenant->subscribe('price_id')
+    ->successUrl('/dashboard')
+    ->redirect();
+
+// One-time charge
+return $tenant->charge(4999, 'product_id')
+    ->redirect();
+
+// Just get the URL
+$url = $tenant->checkout('price_id')->url();
 ```
 
-### Subscription Checks
+## Subscription Management
 
 ```php
-$tenant->subscribed();          // Has active subscription?
-$tenant->onPlan('pro');         // On specific plan?
-$tenant->onTrial();             // In trial period?
-$tenant->canceled();            // Canceled but still active?
-$tenant->expired();             // Fully expired?
-$tenant->planName();            // "pro"
-$tenant->subscriptionEndsAt();  // Carbon date
+// Check status
+$tenant->subscribed();              // Has active subscription?
+$tenant->subscribed('default', $productId);  // On specific product?
+$tenant->onTrial();                 // In trial?
+$tenant->onGracePeriod();           // Canceled but still active?
+
+// Get subscription
+$sub = $tenant->subscription();
+$sub->active();                     // Active?
+$sub->canceled();                   // Canceled?
+$sub->valid();                      // Active, trial, or grace period?
+$sub->ended();                      // Fully ended?
+$sub->pastDue();                    // Payment past due?
+
+// Actions
+$sub->swap('new_price_id');         // Change plan
+$sub->cancel();                     // Cancel at period end
+$sub->resume();                     // Resume during grace period
 ```
 
-### Plan Limits & Features
+## Customer Portal
 
 ```php
-$tenant->planLimit('servers');      // 50
-$tenant->planLimit('users');        // 10
-$tenant->hasFeature('attack_mode'); // true
+return redirect($tenant->customerPortalUrl());
+
+// Or shorthand
+return $tenant->redirectToCustomerPortal();
 ```
 
-### Plan Changes
+## Plan Limits & Features
 
 ```php
-// Upgrade / downgrade
-$tenant->changePlan('pro', 'new_price_id');
-
-// Cancel at period end
-$tenant->cancelSubscription();
-
-// Resume canceled subscription
-$tenant->resumeSubscription();
+$tenant->planName();                    // "pro"
+$tenant->planLimit('servers');          // 50
+$tenant->planLimit('users');            // 10
+$tenant->hasFeature('attack_mode');     // true
+$tenant->onFreePlan();                  // false
+$tenant->exceedsLimit('servers', 48);   // false
+$tenant->exceedsLimit('servers', 50);   // true
+$tenant->planLimits();                  // ['servers' => 50, 'users' => 10]
+$tenant->planFeatures();               // ['*']
 ```
 
-### Customer Portal
+## Usage-Based Billing
 
 ```php
-return redirect($tenant->portalUrl());
+// Track single event
+$tenant->ingestUsageEvent('api_call', ['endpoint' => '/servers']);
+
+// Batch events
+$tenant->ingestUsageEvents([
+    ['name' => 'api_call', 'metadata' => ['endpoint' => '/alerts']],
+    ['name' => 'api_call', 'metadata' => ['endpoint' => '/servers']],
+]);
+
+// Get meters
+$tenant->listCustomerMeters();
+```
+
+## Benefits
+
+```php
+$tenant->listBenefits();
+$tenant->getBenefit('benefit_id');
+$tenant->listBenefitGrants('benefit_id');
+```
+
+## Orders
+
+```php
+$tenant->orders;                          // All orders
+$tenant->hasPurchasedProduct('product_id'); // Check purchase
 ```
 
 ## Webhooks
 
-The package automatically handles these Polar webhook events:
+The package automatically processes these Polar events:
 
 | Event | Action |
 |-------|--------|
-| `subscription.created` | Sets plan, status, subscription IDs |
-| `subscription.updated` | Syncs plan changes |
+| `subscription.created` | Creates subscription + customer record |
+| `subscription.updated` | Syncs status, product, period end |
 | `subscription.active` | Sets status to active |
 | `subscription.canceled` | Sets status to canceled |
-| `subscription.revoked` | Resets to free plan |
-| `order.created` | Fires event (no DB change) |
+| `subscription.revoked` | Sets status to revoked |
+| `order.created` | Creates order record |
+| `order.updated` | Syncs order data |
+| `customer.created/updated/deleted` | Syncs customer records |
+| `checkout.created/updated` | Fires events |
+| `benefit_grant.created/updated/revoked` | Fires events |
 
-### Custom Webhook Handling
-
-Listen for events in your `EventServiceProvider` or a listener:
+### Custom Event Listeners
 
 ```php
-use AkyrosLabs\Polar\Events\PolarSubscriptionCreated;
+use AkyrosLabs\Polar\Events\SubscriptionCreated;
 
 class HandleNewSubscription
 {
-    public function handle(PolarSubscriptionCreated $event): void
+    public function handle(SubscriptionCreated $event): void
     {
         $tenant = $event->billable;
-        $data = $event->data;
-
         // Send welcome email, provision resources, etc.
     }
 }
 ```
 
-Available events:
-- `PolarWebhookReceived` — fired for every webhook
-- `PolarSubscriptionCreated`
-- `PolarSubscriptionUpdated`
-- `PolarSubscriptionActive`
-- `PolarSubscriptionCanceled`
-- `PolarOrderCreated`
+**17 events available:** WebhookReceived, WebhookHandled, SubscriptionCreated, SubscriptionUpdated, SubscriptionActive, SubscriptionCanceled, SubscriptionRevoked, OrderCreated, OrderUpdated, CustomerCreated, CustomerUpdated, CustomerDeleted, CheckoutCreated, CheckoutUpdated, BenefitGrantCreated, BenefitGrantUpdated, BenefitGrantRevoked
 
 ## Middleware
 
-Protect routes by subscription status:
-
 ```php
-// Require any active subscription
-Route::middleware('polar.subscribed')->group(function () {
-    // ...
+// In bootstrap/app.php — auto-registered as 'subscribed'
+Route::middleware('subscribed')->group(function () {
+    // Requires any active subscription
 });
 
-// Require specific plan
-Route::middleware('polar.subscribed:pro')->group(function () {
-    // ...
+Route::middleware('subscribed:pro')->group(function () {
+    // Requires specific plan
 });
 ```
 
-Register the middleware alias in `bootstrap/app.php`:
+## Blade Directives
 
-```php
-use AkyrosLabs\Polar\Http\Middleware\EnsureSubscribed;
+```blade
+@subscribed
+    <p>You have an active subscription.</p>
+@endsubscribed
 
-$middleware->alias([
-    'polar.subscribed' => EnsureSubscribed::class,
-]);
+@onPlan('pro')
+    <p>Pro features here.</p>
+@endonPlan
+
+@onTrial
+    <p>Your trial ends soon.</p>
+@endonTrial
+
+@feature('attack_mode')
+    <button>Activate Attack Mode</button>
+@endfeature
 ```
 
 ## Artisan Commands
@@ -201,31 +242,39 @@ $middleware->alias([
 ```bash
 # Sync all subscriptions with Polar
 php artisan polar:sync
+
+# List all products
+php artisan polar:products
 ```
+
+## Facade
+
+```php
+use AkyrosLabs\Polar\Facades\Polar;
+
+$products = Polar::listProducts();
+$subscription = Polar::getSubscription($id);
+$session = Polar::createCustomerSession($customerId);
+```
+
+## Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `polar_customers` | Billable ↔ Polar customer mapping, generic trial |
+| `polar_subscriptions` | Active subscriptions with status, product, period |
+| `polar_orders` | Orders with amounts, tax, refund tracking |
+
+All tables use polymorphic `billable` relationships — works with any model.
 
 ## Sandbox Mode
 
-Set `POLAR_SANDBOX=true` in `.env` to use Polar's sandbox environment for testing. All API calls will go to `sandbox-api.polar.sh`.
-
-## Migration Columns
-
-The published migration adds these columns to your billable model's table:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `polar_customer_id` | string | Polar customer ID |
-| `polar_subscription_id` | string | Active subscription ID |
-| `polar_product_id` | string | Current product ID |
-| `polar_price_id` | string | Current price ID |
-| `subscription_status` | string | active, trialing, canceled, inactive |
-| `trial_ends_at` | timestamp | Trial expiration |
-| `current_period_end` | timestamp | Current billing period end |
+Set `POLAR_SANDBOX=true` to use `sandbox-api.polar.sh` for testing.
 
 ## Requirements
 
 - PHP 8.2+
 - Laravel 11 or 12
-- Polar.sh account
 
 ## License
 

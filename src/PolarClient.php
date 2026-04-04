@@ -4,7 +4,6 @@ namespace AkyrosLabs\Polar;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Http\Client\PendingRequest;
-use Illuminate\Http\Client\RequestException;
 
 class PolarClient
 {
@@ -19,151 +18,6 @@ class PolarClient
             : 'https://api.polar.sh/v1';
     }
 
-    // -------------------------------------------------------
-    //  Customers
-    // -------------------------------------------------------
-
-    /**
-     * Create a new customer in Polar.
-     */
-    public function createCustomer(string $email, string $name, array $metadata = []): array
-    {
-        $response = $this->request()->post('/customers', [
-            'email' => $email,
-            'name' => $name,
-            'metadata' => $metadata,
-        ]);
-
-        return $this->handleResponse($response);
-    }
-
-    /**
-     * Retrieve a customer by their Polar ID.
-     */
-    public function getCustomer(string $customerId): array
-    {
-        $response = $this->request()->get("/customers/{$customerId}");
-
-        return $this->handleResponse($response);
-    }
-
-    /**
-     * Look up a customer by email address. Returns null when not found.
-     */
-    public function getCustomerByEmail(string $email): ?array
-    {
-        $response = $this->request()->get('/customers', [
-            'email' => $email,
-        ]);
-
-        $data = $this->handleResponse($response);
-
-        $items = $data['items'] ?? $data['result'] ?? $data;
-
-        if (is_array($items) && count($items) > 0) {
-            return is_array(reset($items)) ? reset($items) : $data;
-        }
-
-        return null;
-    }
-
-    // -------------------------------------------------------
-    //  Checkouts
-    // -------------------------------------------------------
-
-    /**
-     * Create a checkout session for a given product price.
-     */
-    public function createCheckout(
-        string $productPriceId,
-        string $customerId,
-        string $successUrl,
-        array $metadata = [],
-    ): array {
-        $response = $this->request()->post('/checkouts/custom', [
-            'product_price_id' => $productPriceId,
-            'customer_id' => $customerId,
-            'success_url' => $successUrl,
-            'metadata' => $metadata,
-        ]);
-
-        return $this->handleResponse($response);
-    }
-
-    // -------------------------------------------------------
-    //  Subscriptions
-    // -------------------------------------------------------
-
-    /**
-     * Retrieve a single subscription.
-     */
-    public function getSubscription(string $subscriptionId): array
-    {
-        $response = $this->request()->get("/subscriptions/{$subscriptionId}");
-
-        return $this->handleResponse($response);
-    }
-
-    /**
-     * List all subscriptions for a given customer.
-     */
-    public function listSubscriptions(string $customerId): array
-    {
-        $response = $this->request()->get('/subscriptions', [
-            'customer_id' => $customerId,
-        ]);
-
-        return $this->handleResponse($response);
-    }
-
-    /**
-     * Cancel a subscription at the end of the current billing period.
-     */
-    public function cancelSubscription(string $subscriptionId): array
-    {
-        $response = $this->request()->patch("/subscriptions/{$subscriptionId}", [
-            'cancel_at_period_end' => true,
-        ]);
-
-        return $this->handleResponse($response);
-    }
-
-    /**
-     * Change a subscription to a different product price (up/downgrade).
-     */
-    public function updateSubscription(string $subscriptionId, string $productPriceId): array
-    {
-        $response = $this->request()->patch("/subscriptions/{$subscriptionId}", [
-            'product_price_id' => $productPriceId,
-        ]);
-
-        return $this->handleResponse($response);
-    }
-
-    // -------------------------------------------------------
-    //  Customer Portal
-    // -------------------------------------------------------
-
-    /**
-     * Create a customer portal session and return the session payload
-     * (includes the portal URL).
-     */
-    public function createCustomerSession(string $customerId): array
-    {
-        $response = $this->request()->post('/customer-sessions', [
-            'customer_id' => $customerId,
-        ]);
-
-        return $this->handleResponse($response);
-    }
-
-    // -------------------------------------------------------
-    //  Internal helpers
-    // -------------------------------------------------------
-
-    /**
-     * Build an authenticated HTTP client pointed at the Polar API.
-     */
     private function request(): PendingRequest
     {
         return Http::withHeaders([
@@ -172,26 +26,133 @@ class PolarClient
         ])->baseUrl($this->baseUrl);
     }
 
-    /**
-     * Inspect the response and throw meaningful exceptions on failure.
-     */
-    private function handleResponse(\Illuminate\Http\Client\Response $response): array
+    private function handleResponse($response): array
     {
         if ($response->status() === 401) {
-            throw new \RuntimeException(
-                'Polar API authentication failed. Please verify your POLAR_API_KEY is correct.'
-            );
+            throw new Exceptions\PolarApiError('Unauthorized — check your POLAR_API_KEY.');
         }
-
-        if ($response->failed()) {
-            $body = $response->json();
-            $message = $body['detail'] ?? $body['message'] ?? $response->body();
-
-            throw new \RuntimeException(
-                "Polar API error [{$response->status()}]: {$message}"
-            );
+        if (!$response->successful()) {
+            throw new Exceptions\PolarApiError("Polar API error {$response->status()}: {$response->body()}");
         }
-
         return $response->json() ?? [];
+    }
+
+    // Customers
+    public function createCustomer(string $email, string $name, array $metadata = []): array
+    {
+        return $this->handleResponse(
+            $this->request()->post('/customers', compact('email', 'name', 'metadata'))
+        );
+    }
+
+    public function getCustomer(string $customerId): array
+    {
+        return $this->handleResponse($this->request()->get("/customers/{$customerId}"));
+    }
+
+    public function getCustomerByEmail(string $email): ?array
+    {
+        $result = $this->handleResponse($this->request()->get('/customers', ['email' => $email]));
+        $items = $result['items'] ?? $result['result'] ?? [];
+        return !empty($items) ? $items[0] : null;
+    }
+
+    // Checkouts
+    public function createCheckout(array $params): array
+    {
+        return $this->handleResponse($this->request()->post('/checkouts/custom', $params));
+    }
+
+    // Subscriptions
+    public function getSubscription(string $subscriptionId): array
+    {
+        return $this->handleResponse($this->request()->get("/subscriptions/{$subscriptionId}"));
+    }
+
+    public function listSubscriptions(string $customerId): array
+    {
+        $result = $this->handleResponse($this->request()->get('/subscriptions', ['customer_id' => $customerId]));
+        return $result['items'] ?? $result['result'] ?? [];
+    }
+
+    public function updateSubscription(string $subscriptionId, string $productPriceId): array
+    {
+        return $this->handleResponse(
+            $this->request()->patch("/subscriptions/{$subscriptionId}", ['product_price_id' => $productPriceId])
+        );
+    }
+
+    public function cancelSubscription(string $subscriptionId): array
+    {
+        return $this->handleResponse($this->request()->delete("/subscriptions/{$subscriptionId}"));
+    }
+
+    public function resumeSubscription(string $subscriptionId): array
+    {
+        return $this->handleResponse(
+            $this->request()->patch("/subscriptions/{$subscriptionId}", ['cancel_at_period_end' => false])
+        );
+    }
+
+    // Customer Portal
+    public function createCustomerSession(string $customerId): array
+    {
+        return $this->handleResponse(
+            $this->request()->post('/customer-sessions', ['customer_id' => $customerId])
+        );
+    }
+
+    // Products
+    public function listProducts(array $params = []): array
+    {
+        $result = $this->handleResponse($this->request()->get('/products', $params));
+        return $result['items'] ?? $result['result'] ?? [];
+    }
+
+    // Benefits
+    public function listBenefits(?string $organizationId = null): array
+    {
+        $params = $organizationId ? ['organization_id' => $organizationId] : [];
+        $result = $this->handleResponse($this->request()->get('/benefits', $params));
+        return $result['items'] ?? $result['result'] ?? [];
+    }
+
+    public function getBenefit(string $benefitId): array
+    {
+        return $this->handleResponse($this->request()->get("/benefits/{$benefitId}"));
+    }
+
+    public function listBenefitGrants(string $benefitId): array
+    {
+        $result = $this->handleResponse($this->request()->get("/benefits/{$benefitId}/grants"));
+        return $result['items'] ?? $result['result'] ?? [];
+    }
+
+    // Usage / Metering
+    public function ingestUsageEvent(string $customerId, string $eventName, array $metadata = []): void
+    {
+        $this->request()->post('/customer-meters/events', [
+            'customer_id' => $customerId,
+            'name' => $eventName,
+            'metadata' => $metadata,
+        ]);
+    }
+
+    public function ingestUsageEvents(string $customerId, array $events): void
+    {
+        $formatted = array_map(fn ($e) => [
+            'customer_id' => $customerId,
+            'name' => $e['name'],
+            'metadata' => $e['metadata'] ?? [],
+        ], $events);
+        $this->request()->post('/customer-meters/events/batch', ['events' => $formatted]);
+    }
+
+    public function listCustomerMeters(string $customerId, ?string $meterId = null): array
+    {
+        $params = ['customer_id' => $customerId];
+        if ($meterId) $params['meter_id'] = $meterId;
+        $result = $this->handleResponse($this->request()->get('/customer-meters', $params));
+        return $result['items'] ?? $result['result'] ?? [];
     }
 }
