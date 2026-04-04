@@ -1,0 +1,32 @@
+{
+    "name": "akyroslabs/laravel-polar",
+    "description": "Polar.sh integration for Laravel — subscriptions, checkout, customer portal, webhooks, and plan management. Polar as Merchant of Record.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["laravel", "polar", "billing", "subscriptions", "merchant-of-record", "saas"],
+    "authors": [
+        {
+            "name": "Akyros Labs LLC",
+            "email": "hello@akyroslabs.com"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^11.0|^12.0",
+        "illuminate/database": "^11.0|^12.0",
+        "illuminate/http": "^11.0|^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "AkyrosLabs\\Polar\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "AkyrosLabs\\Polar\\PolarServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "stable"
+}
