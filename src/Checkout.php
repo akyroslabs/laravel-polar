@@ -40,8 +40,7 @@ class Checkout
         $client = app(PolarClient::class);
 
         $params = [
-            'product_price_id' => $this->products[0] ?? null,
-            'products' => count($this->products) > 1 ? $this->products : null,
+            'products' => $this->products,
             'customer_id' => $this->billable->polarCustomerId(),
             'success_url' => $this->successUrl,
             'metadata' => array_merge($this->metadata, [
