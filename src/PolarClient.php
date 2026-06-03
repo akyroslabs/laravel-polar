@@ -60,7 +60,7 @@ class PolarClient
     // Checkouts
     public function createCheckout(array $params): array
     {
-        return $this->handleResponse($this->request()->post('/checkouts/custom', $params));
+        return $this->handleResponse($this->request()->post('/checkouts', $params));
     }
 
     // Subscriptions
