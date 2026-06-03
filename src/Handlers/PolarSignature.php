@@ -13,7 +13,7 @@ class PolarSignature
             $parts = explode(',', $sig);
             if (count($parts) < 2) continue;
             $sigBytes = base64_decode($parts[1]);
-            $expected = hash_hmac('sha256', $toSign, base64_decode($secret), true);
+            $expected = hash_hmac('sha256', $toSign, base64_decode(str_starts_with($secret, 'whsec_') ? substr($secret, 6) : $secret), true);
             if (hash_equals($sigBytes, $expected)) {
                 return true;
             }
