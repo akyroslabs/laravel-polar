@@ -78,7 +78,7 @@ class PolarClient
     public function updateSubscription(string $subscriptionId, string $productPriceId): array
     {
         return $this->handleResponse(
-            $this->request()->patch("/subscriptions/{$subscriptionId}", ['product_price_id' => $productPriceId])
+            $this->request()->patch("/subscriptions/{$subscriptionId}", ['product_id' => $productPriceId])
         );
     }
 
