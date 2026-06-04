@@ -1,5 +1,39 @@
 # Laravel Polar
 
+> [!CAUTION]
+> **This package is deprecated and unmaintained.**
+> Polar's API has moved on (checkout body shape, webhook secret format,
+> signature verification semantics) and keeping this package in step
+> would be a permanent moving-target chase. Use
+> **[`danestves/laravel-polar`](https://github.com/danestves/laravel-polar)**
+> instead — it ships against the current Polar API, is built on the
+> official [`polar-sh/sdk`](https://github.com/polarsource/polar-php),
+> and has a healthy upstream maintenance cadence.
+>
+> #### Quick migration map (≈30 min for a typical app)
+>
+> | This package | `danestves/laravel-polar` |
+> |---|---|
+> | `use AkyrosLabs\Polar\Billable;` | `use Danestves\LaravelPolar\Billable;` |
+> | `$user->checkout($productId)` | `$user->checkout([$productId])` (array) |
+> | `->metadata([...])` / `->successUrl(...)` | `->withMetadata([...])` / `->withSuccessUrl(...)` |
+> | Event: `AkyrosLabs\Polar\Events\OrderCreated` with `$event->data` array | `Danestves\LaravelPolar\Events\OrderCreated` with `$event->billable`, `$event->order`, `$event->payload` |
+> | `POLAR_API_KEY`, `POLAR_SANDBOX=true\|false` | `POLAR_ACCESS_TOKEN`, `POLAR_SERVER=sandbox\|production`, `POLAR_ORGANIZATION_ID` |
+> | `polar_orders.polar_customer_id` column | renames to `customer_id` |
+> | Webhook URL `/polar/webhook` | unchanged (`/polar/webhook`) |
+>
+> The webhook controller + event names are deliberately close enough
+> that most listeners just need an import swap and a small refactor of
+> how they read order metadata (the new event ships the full SDK
+> payload as `$event->payload`; round-trip via
+> `json_decode(json_encode($event->payload), true)` if you need the
+> flat array shape this package used to provide).
+>
+> The repository will be archived shortly. Issues and PRs will not be
+> reviewed.
+
+---
+
 Polar.sh integration for Laravel — subscriptions, checkout, customer portal, webhooks, plan limits, usage billing, benefits, and more. Polar as Merchant of Record.
 
 No tax headaches. No invoice logic. Polar handles it all.
